@@ -1,0 +1,128 @@
+name: Build SFDownloader APK
+
+on:
+  push:
+    branches: [ "**" ]
+    tags: [ "v*" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android SDK components
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+
+          (yes || true) | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Install Kotlin compiler (kotlinc)
+        run: |
+          KOTLIN_VERSION="1.9.24"
+          curl -fsSL "https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERSION}/kotlin-compiler-${KOTLIN_VERSION}.zip" -o /tmp/kotlin.zip
+          unzip -q /tmp/kotlin.zip -d /opt/kotlin
+          echo "/opt/kotlin/kotlinc/bin" >> "$GITHUB_PATH"
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export ANDROID_SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          PLATFORM_JAR="${ANDROID_HOME}/platforms/android-34/android.jar"
+          BUILD_TOOLS_DIR=$(find "${ANDROID_HOME}/build-tools" -maxdepth 1 -mindepth 1 | sort -V | tail -n 1)
+          AAPT2="${BUILD_TOOLS_DIR}/aapt2"
+          D8="${BUILD_TOOLS_DIR}/d8"
+          ZIPALIGN="${BUILD_TOOLS_DIR}/zipalign"
+          APKSIGNER="${BUILD_TOOLS_DIR}/apksigner"
+          KOTLIN_STDLIB="/opt/kotlin/kotlinc/lib/kotlin-stdlib.jar"
+
+          rm -rf build_out
+          mkdir -p build_out/compiled_res build_out/gen build_out/classes build_out/dex
+
+          "$AAPT2" compile --dir res -o build_out/compiled_res/
+
+          "$AAPT2" link \
+            -o build_out/linked.apk \
+            -I "$PLATFORM_JAR" \
+            --manifest AndroidManifest.xml \
+            --java build_out/gen \
+            --auto-add-overlay \
+            $(find build_out/compiled_res -name "*.flat")
+
+          javac -source 21 -target 21 \
+            -classpath "$PLATFORM_JAR" \
+            -d build_out/classes \
+            $(find build_out/gen -name "*.java")
+
+          kotlinc \
+            -jvm-target 21 \
+            -classpath "$PLATFORM_JAR:build_out/classes" \
+            -d build_out/classes \
+            $(find src -name "*.kt")
+
+          "$D8" \
+            --lib "$PLATFORM_JAR" \
+            --classpath "$KOTLIN_STDLIB" \
+            --output build_out/dex \
+            $(find build_out/classes -name "*.class")
+
+          cp build_out/linked.apk build_out/unaligned.apk
+          (cd build_out/dex && zip -q ../unaligned.apk classes*.dex)
+
+          "$ZIPALIGN" -f 4 build_out/unaligned.apk build_out/aligned.apk
+          if [ ! -f build_out/debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore build_out/debug.keystore \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          "$APKSIGNER" sign \
+            --ks build_out/debug.keystore \
+            --ks-pass pass:android \
+            --out build_out/SFDownloader-debug.apk \
+            build_out/aligned.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFDownloader-apk
+          path: build_out/SFDownloader-debug.apk
+
+      - name: Generate SHA-256 checksum
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          sha256sum build_out/SFDownloader-debug.apk > build_out/SFDownloader-debug.apk.sha256
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build_out/SFDownloader-debug.apk
+            build_out/SFDownloader-debug.apk.sha256
+          generate_release_notes: true
