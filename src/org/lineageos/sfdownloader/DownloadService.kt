@@ -1,4 +1,4 @@
-package org.lineageos.romdownloader
+package org.lineageos.sfdownloader
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -64,10 +64,10 @@ object DownloadStateHolder {
 class DownloadService : Service() {
 
     companion object {
-        const val ACTION_START = "org.lineageos.romdownloader.ACTION_START"
-        const val ACTION_PAUSE = "org.lineageos.romdownloader.ACTION_PAUSE"
-        const val ACTION_CANCEL = "org.lineageos.romdownloader.ACTION_CANCEL"
-        const val ACTION_SWITCH_MIRROR = "org.lineageos.romdownloader.ACTION_SWITCH_MIRROR"
+        const val ACTION_START = "org.lineageos.sfdownloader.ACTION_START"
+        const val ACTION_PAUSE = "org.lineageos.sfdownloader.ACTION_PAUSE"
+        const val ACTION_CANCEL = "org.lineageos.sfdownloader.ACTION_CANCEL"
+        const val ACTION_SWITCH_MIRROR = "org.lineageos.sfdownloader.ACTION_SWITCH_MIRROR"
 
         const val EXTRA_URL = "extra_url"
         const val EXTRA_FILE_NAME = "extra_file_name"
@@ -76,7 +76,7 @@ class DownloadService : Service() {
         const val DEFAULT_THREADS = 6
         const val DEFAULT_MIRROR = "auto"
 
-        private const val CHANNEL_ID = "rom_downloads_channel"
+        private const val CHANNEL_ID = "sf_downloads_channel"
         private const val FOREGROUND_NOTIF_ID = 1001
 
         fun startDownload(
@@ -242,7 +242,7 @@ class DownloadService : Service() {
                 activeTasks.remove(fileName)
                 val switchInfo = pendingMirrorSwitch.remove(fileName)
                 if (switchInfo != null) {
-                    val prefs = getSharedPreferences("rom_downloader_prefs", Context.MODE_PRIVATE)
+                    val prefs = getSharedPreferences("sf_downloader_prefs", Context.MODE_PRIVATE)
                     val latestMirror = prefs.getString("selected_mirror", DEFAULT_MIRROR) ?: DEFAULT_MIRROR
                     launchDownload(fileName, switchInfo.first, switchInfo.second, latestMirror)
                     return
@@ -305,7 +305,7 @@ class DownloadService : Service() {
     private fun acquireWakeLock() {
         if (wakeLock == null) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "13TFirmware::DownloadWakeLock")
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SFDownloader::DownloadWakeLock")
         }
         if (wakeLock?.isHeld == false) {
             wakeLock?.acquire(60 * 60 * 1000L)

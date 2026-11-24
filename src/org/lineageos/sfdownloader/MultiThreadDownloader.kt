@@ -1,4 +1,4 @@
-package org.lineageos.romdownloader
+package org.lineageos.sfdownloader
 
 import android.content.ContentValues
 import android.content.Context

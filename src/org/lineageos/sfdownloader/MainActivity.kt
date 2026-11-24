@@ -1,4 +1,4 @@
-package org.lineageos.romdownloader
+package org.lineageos.sfdownloader
 
 import android.Manifest
 import android.app.Activity
@@ -20,7 +20,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.net.Uri
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ProgressBar
@@ -60,9 +62,12 @@ class MainActivity : Activity() {
         private const val PROJECT_NAME = "oneplus-pagani"
         private const val DEVICE_FOLDER = ""
 
-        private const val PREFS_NAME = "rom_downloader_prefs"
+        private const val PREFS_NAME = "sf_downloader_prefs"
         private const val KEY_THREAD_COUNT = "thread_count"
         private const val KEY_MIRROR = "selected_mirror"
+        private const val KEY_PROJECT = "selected_project"
+        private const val KEY_PROJECT_HISTORY = "project_history"
+        private const val DEFAULT_PROJECT = "audacity"
         private val THREAD_OPTIONS = listOf(2, 4, 6, 8)
         private val MIRROR_IDS = listOf(
             "auto",
@@ -85,8 +90,8 @@ class MainActivity : Activity() {
             "IX Peering"
         )
 
-        val RSS_URL: String
-            get() = "https://sourceforge.net/projects/$PROJECT_NAME/rss?limit=100"
+        fun buildRssUrl(projectSlug: String): String =
+            "https://sourceforge.net/projects/$projectSlug/rss"
     }
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -97,10 +102,12 @@ class MainActivity : Activity() {
     private lateinit var listView: ListView
     private lateinit var refreshButton: Button
     private lateinit var threadsButton: Button
+    private lateinit var projectButton: Button
     private lateinit var mirrorButton: Button
 
     private var selectedThreads: Int = DownloadService.DEFAULT_THREADS
     private var selectedMirror: String = DownloadService.DEFAULT_MIRROR
+    private var currentProject: String = DEFAULT_PROJECT
 
     private var groupedBuilds: Map<String, List<RomBuild>> = emptyMap()
     private var sortedFolderKeys: List<String> = emptyList()
@@ -120,6 +127,8 @@ class MainActivity : Activity() {
         selectedThreads = if (saved in THREAD_OPTIONS) saved else DownloadService.DEFAULT_THREADS
         val savedMirror = prefs.getString(KEY_MIRROR, DownloadService.DEFAULT_MIRROR) ?: DownloadService.DEFAULT_MIRROR
         selectedMirror = if (savedMirror in MIRROR_IDS) savedMirror else DownloadService.DEFAULT_MIRROR
+        currentProject = sanitizeProjectSlug(prefs.getString(KEY_PROJECT, DEFAULT_PROJECT) ?: DEFAULT_PROJECT)
+            ?: DEFAULT_PROJECT
 
         val deviceTitle = DEVICE_FOLDER.ifEmpty { PROJECT_NAME }
         title = getString(R.string.title_with_device, deviceTitle)
@@ -205,15 +214,49 @@ class MainActivity : Activity() {
             )
         }
 
-        val topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+        val topBarContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
                 bottomMargin = dp(12)
             }
+        }
+
+        val projectRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(8)
+            }
+        }
+
+        projectButton = Button(this).apply {
+            text = getString(R.string.project_btn_format, currentProject)
+            minWidth = 0
+            minimumWidth = 0
+            maxLines = 1
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener { showProjectDialog() }
+        }
+
+        projectRow.addView(projectButton)
+
+        val controlsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         }
 
         mirrorButton = Button(this).apply {
@@ -225,7 +268,7 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                1.3f
+                1.2f
             ).apply {
                 marginEnd = dp(6)
             }
@@ -241,7 +284,7 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                0.8f
+                0.85f
             ).apply {
                 marginEnd = dp(6)
             }
@@ -257,15 +300,18 @@ class MainActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f
+                1.0f
             )
             setOnClickListener { loadRssFeed() }
         }
 
-        topBar.addView(mirrorButton)
-        topBar.addView(threadsButton)
-        topBar.addView(refreshButton)
-        rootLayout.addView(topBar)
+        controlsRow.addView(mirrorButton)
+        controlsRow.addView(threadsButton)
+        controlsRow.addView(refreshButton)
+
+        topBarContainer.addView(projectRow)
+        topBarContainer.addView(controlsRow)
+        rootLayout.addView(topBarContainer)
 
         progressBar = ProgressBar(this).apply {
             visibility = View.GONE
@@ -311,6 +357,7 @@ class MainActivity : Activity() {
         }
         rootLayout.addView(listView)
 
+        updateActivityTitle()
         setContentView(rootLayout)
     }
 
@@ -356,7 +403,7 @@ class MainActivity : Activity() {
 
         executor.execute {
             try {
-                val builds = fetchSourceForgeRss(RSS_URL)
+                val builds = fetchSourceForgeRss(buildRssUrl(currentProject))
                 val grouped = builds.groupBy { it.subFolder }
                     .mapValues { (_, list) -> list.sortedByDescending { it.timestamp } }
                 val sortedKeys = grouped.keys.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
@@ -525,6 +572,105 @@ class MainActivity : Activity() {
             }
         }
         return 0L
+    }
+
+
+    private fun updateActivityTitle() {
+        title = "${getString(R.string.app_name)} ($currentProject)"
+    }
+
+    private fun sanitizeProjectSlug(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+
+        val candidate = if (trimmed.contains("sourceforge.net/projects/", ignoreCase = true)) {
+            val idx = trimmed.indexOf("/projects/", ignoreCase = true)
+            if (idx >= 0) {
+                trimmed.substring(idx + "/projects/".length)
+                    .substringBefore("/")
+                    .substringBefore("?")
+            } else {
+                trimmed
+            }
+        } else {
+            val parsedHost = try {
+                Uri.parse(trimmed).host
+            } catch (_: Exception) {
+                null
+            }
+            if (parsedHost != null && trimmed.contains("://")) {
+                return null
+            }
+            trimmed.substringBefore("/").substringBefore("?")
+        }.trim().lowercase()
+
+        if (!candidate.matches(Regex("^[a-z0-9][a-z0-9._-]{0,62}$"))) {
+            return null
+        }
+        return candidate
+    }
+
+    private fun loadProjectHistory(): List<String> {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_PROJECT_HISTORY, DEFAULT_PROJECT) ?: DEFAULT_PROJECT
+        return raw.split(",")
+            .mapNotNull { sanitizeProjectSlug(it) }
+            .distinct()
+    }
+
+    private fun saveProjectSelection(slug: String) {
+        currentProject = slug
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val history = (listOf(slug) + loadProjectHistory()).distinct().take(12)
+        prefs.edit()
+            .putString(KEY_PROJECT, slug)
+            .putString(KEY_PROJECT_HISTORY, history.joinToString(","))
+            .apply()
+
+        projectButton.text = getString(R.string.project_btn_format, currentProject)
+        updateActivityTitle()
+        Toast.makeText(
+            this,
+            getString(R.string.toast_project_set, currentProject),
+            Toast.LENGTH_SHORT
+        ).show()
+        loadRssFeed()
+    }
+
+    private fun showProjectDialog() {
+        val input = EditText(this).apply {
+            setText(currentProject)
+            setSelection(text.length)
+            hint = getString(R.string.hint_project_slug)
+            isSingleLine = true
+        }
+
+        val history = loadProjectHistory()
+        val builder = AlertDialog.Builder(this)
+            .setTitle(R.string.dialog_select_project)
+            .setView(input)
+            .setPositiveButton(R.string.btn_open) { _, _ ->
+                val slug = sanitizeProjectSlug(input.text.toString())
+                if (slug != null) {
+                    saveProjectSelection(slug)
+                } else {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.error_invalid_project),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            .setNegativeButton(R.string.btn_cancel, null)
+
+        if (history.isNotEmpty()) {
+            builder.setItems(history.toTypedArray()) { dialog, which ->
+                saveProjectSelection(history[which])
+                dialog.dismiss()
+            }
+        }
+
+        builder.show()
     }
 
     private fun formatFileSize(bytes: Long): String {
