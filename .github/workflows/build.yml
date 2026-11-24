@@ -78,15 +78,15 @@ jobs:
 
           kotlinc \
             -jvm-target 21 \
-            -classpath "$PLATFORM_JAR:build_out/classes" \
+            -classpath "$PLATFORM_JAR:$KOTLIN_STDLIB:build_out/classes" \
             -d build_out/classes \
             $(find src -name "*.kt")
 
           "$D8" \
             --lib "$PLATFORM_JAR" \
-            --classpath "$KOTLIN_STDLIB" \
             --output build_out/dex \
-            $(find build_out/classes -name "*.class")
+            $(find build_out/classes -name "*.class") \
+            "$KOTLIN_STDLIB"
 
           cp build_out/linked.apk build_out/unaligned.apk
           (cd build_out/dex && zip -q ../unaligned.apk classes*.dex)
