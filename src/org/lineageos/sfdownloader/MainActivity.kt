@@ -1,5 +1,6 @@
 package org.lineageos.sfdownloader
 
+import android.text.InputType
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
@@ -242,13 +243,30 @@ class MainActivity : Activity() {
             maxLines = 1
             setPadding(dp(12), dp(6), dp(12), dp(6))
             layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply {
+                marginEnd = dp(6)
+            }
             setOnClickListener { showProjectDialog() }
         }
 
+        val directUrlButton = Button(this).apply {
+            text = getString(R.string.btn_direct_url)
+            minWidth = 0
+            minimumWidth = 0
+            maxLines = 1
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener { showDirectUrlDialog() }
+        }
+
         projectRow.addView(projectButton)
+        projectRow.addView(directUrlButton)
 
         val controlsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1023,5 +1041,73 @@ class MainActivity : Activity() {
             cardLayout.addView(btnRow)
             return cardLayout
         }
+    }
+
+    private fun parseSourceForgeDirectUrl(rawUrl: String): Pair<String, String>? {
+        val uri = Uri.parse(rawUrl.trim())
+        val host = uri.host?.lowercase() ?: return null
+        val segments = uri.pathSegments.filter { it.isNotBlank() }
+
+        if (host.endsWith("sourceforge.net") && segments.size >= 4 &&
+            segments[0] == "projects" && segments[2] == "files"
+        ) {
+            val projectSlug = segments[1]
+            val fileSegs = segments.drop(3).let { segs ->
+                if (segs.lastOrNull() == "download") segs.dropLast(1) else segs
+            }
+            if (fileSegs.isEmpty()) return null
+            return projectSlug to fileSegs.joinToString("/")
+        }
+
+        if (host == "downloads.sourceforge.net" && segments.size >= 3 && segments[0] == "project") {
+            val projectSlug = segments[1]
+            val fileSegs = segments.drop(2).let { segs ->
+                if (segs.lastOrNull() == "download") segs.dropLast(1) else segs
+            }
+            if (fileSegs.isEmpty()) return null
+            return projectSlug to fileSegs.joinToString("/")
+        }
+
+        return null
+    }
+
+    private fun showDirectUrlDialog() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.sf_direct_url_hint)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(true)
+            val clip = getSystemService(ClipboardManager::class.java)
+                ?.primaryClip
+                ?.getItemAt(0)
+                ?.coerceToText(this@MainActivity)
+                ?.toString()
+                ?.trim()
+            if (!clip.isNullOrEmpty() && parseSourceForgeDirectUrl(clip) != null) {
+                setText(clip)
+                setSelection(text.length)
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.sf_direct_url_title)
+            .setView(input)
+            .setPositiveButton(R.string.btn_download) { _, _ ->
+                val rawUrl = input.text?.toString()?.trim().orEmpty()
+                val parsed = parseSourceForgeDirectUrl(rawUrl)
+                if (parsed == null) {
+                    Toast.makeText(this, R.string.invalid_sf_url_error, Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                val (projectSlug, relativePath) = parsed
+                val fileName = Uri.decode(relativePath.substringAfterLast('/'))
+                    .map { ch -> if (ch in listOf('\\', '/', ':', '*', '?', '"', '<', '>', '|')) '_' else ch }
+                    .joinToString("")
+                    .ifBlank { "download.bin" }
+                val downloadUrl = "https://sourceforge.net/projects/$projectSlug/files/$relativePath/download"
+                // TODO: при необходимости передай projectSlug / fileName / downloadUrl в свой метод запуска загрузки
+                val _unused: Triple<String, String, String> = Triple(projectSlug, fileName, downloadUrl)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 }

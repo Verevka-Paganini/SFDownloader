@@ -47,4 +47,9 @@
         <item>MB</item>
         <item>GB</item>
     </string-array>
+
+    <string name="btn_direct_url">URL</string>
+    <string name="sf_direct_url_title">SourceForge file URL</string>
+    <string name="sf_direct_url_hint">https://sourceforge.net/projects/…/files/…/download</string>
+    <string name="invalid_sf_url_error">Enter a valid SourceForge file URL</string>
 </resources>
