@@ -43,7 +43,7 @@ jobs:
           unzip -q /tmp/kotlin.zip -d /opt/kotlin
           echo "/opt/kotlin/kotlinc/bin" >> "$GITHUB_PATH"
 
-      - name: Build APK
+      - name: Build and sign APK
         shell: bash
         run: |
           set -euo pipefail
@@ -78,51 +78,73 @@ jobs:
 
           kotlinc \
             -jvm-target 21 \
-            -classpath "$PLATFORM_JAR:build_out/classes" \
+            -classpath "$PLATFORM_JAR:$KOTLIN_STDLIB:build_out/classes" \
             -d build_out/classes \
             $(find src -name "*.kt")
 
           "$D8" \
             --lib "$PLATFORM_JAR" \
-            --classpath "$KOTLIN_STDLIB" \
             --output build_out/dex \
-            $(find build_out/classes -name "*.class")
+            $(find build_out/classes -name "*.class") \
+            "$KOTLIN_STDLIB"
 
           cp build_out/linked.apk build_out/unaligned.apk
           (cd build_out/dex && zip -q ../unaligned.apk classes*.dex)
 
           "$ZIPALIGN" -f 4 build_out/unaligned.apk build_out/aligned.apk
-          if [ ! -f build_out/debug.keystore ]; then
-            keytool -genkeypair -v \
-              -keystore build_out/debug.keystore \
-              -storepass android -keypass android \
-              -alias androiddebugkey \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+
+          if [ -n "${RELEASE_KEYSTORE_BASE64:-}" ] && [ -n "${RELEASE_STORE_PASSWORD:-}" ] && [ -n "${RELEASE_KEY_ALIAS:-}" ]; then
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > build_out/release.jks
+            KEY_PASS_ARGS=()
+            if [ -n "${RELEASE_KEY_PASSWORD:-}" ]; then
+              KEY_PASS_ARGS=(--key-pass "pass:${RELEASE_KEY_PASSWORD}")
+            fi
+            "$APKSIGNER" sign \
+              --ks build_out/release.jks \
+              --ks-pass "pass:${RELEASE_STORE_PASSWORD}" \
+              --ks-key-alias "$RELEASE_KEY_ALIAS" \
+              "${KEY_PASS_ARGS[@]}" \
+              --out build_out/SFDownloader.apk \
+              build_out/aligned.apk
+            rm -f build_out/release.jks
+          else
+            if [ ! -f build_out/debug.keystore ]; then
+              keytool -genkeypair -v \
+                -keystore build_out/debug.keystore \
+                -storepass android -keypass android \
+                -alias androiddebugkey \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            "$APKSIGNER" sign \
+              --ks build_out/debug.keystore \
+              --ks-pass pass:android \
+              --out build_out/SFDownloader.apk \
+              build_out/aligned.apk
           fi
-          "$APKSIGNER" sign \
-            --ks build_out/debug.keystore \
-            --ks-pass pass:android \
-            --out build_out/SFDownloader-debug.apk \
-            build_out/aligned.apk
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: SFDownloader-apk
-          path: build_out/SFDownloader-debug.apk
+          path: build_out/SFDownloader.apk
 
       - name: Generate SHA-256 checksum
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          sha256sum build_out/SFDownloader-debug.apk > build_out/SFDownloader-debug.apk.sha256
+          sha256sum build_out/SFDownloader.apk > build_out/SFDownloader.apk.sha256
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            build_out/SFDownloader-debug.apk
-            build_out/SFDownloader-debug.apk.sha256
+            build_out/SFDownloader.apk
+            build_out/SFDownloader.apk.sha256
           generate_release_notes: true
